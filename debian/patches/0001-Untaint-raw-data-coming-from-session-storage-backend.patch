@@ -1,0 +1,77 @@
+From ab199c765329638301105fd1884af14992bb1615 Mon Sep 17 00:00:00 2001
+From: Niko Tyni <ntyni@debian.org>
+Date: Tue, 12 Jan 2016 23:40:53 +0200
+Subject: [PATCH] Untaint raw data coming from session storage backends
+
+The various storage backends need to be considered trusted,
+so data coming out of them should be untainted.
+
+The _CLAIMED_ID comes from an HTTP cookie and is probably tainted,
+but presumably it's OK if it matched some data in the storage.
+
+Bug: https://rt.cpan.org/Public/Bug/Display.html?id=80346
+Bug-Debian: https://bugs.debian.org/810799
+---
+ lib/CGI/Session.pm |  4 ++++
+ t/taint_storage.t  | 34 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 38 insertions(+)
+ create mode 100644 t/taint_storage.t
+
+diff --git a/lib/CGI/Session.pm b/lib/CGI/Session.pm
+index 2788b04..6460d4d 100644
+--- a/lib/CGI/Session.pm
++++ b/lib/CGI/Session.pm
+@@ -724,6 +724,10 @@ sub load {
+     # Requested session couldn't be retrieved
+     return $self unless $raw_data;
+ 
++    # untaint; we trust the session backend,
++    # and presumably _CLAIMED_ID too at this point
++    $raw_data =~ /^(.*)$/s and $raw_data = $1;
++
+     my $serializer = $self->_serializer();
+     $self->{_DATA} = $serializer->thaw($raw_data);
+     unless ( defined $self->{_DATA} ) {
+diff --git a/t/taint_storage.t b/t/taint_storage.t
+new file mode 100644
+index 0000000..95f5f1a
+--- /dev/null
++++ b/t/taint_storage.t
+@@ -0,0 +1,34 @@
++#!/usr/bin/perl -T
++
++# https://rt.cpan.org/Public/Bug/Display.html?id=80346
++
++use strict;
++use warnings;
++use CGI::Session;
++use Scalar::Util qw(tainted);
++use Test::More tests => 6;
++
++my $sid;
++
++my $session = CGI::Session->new( "driver:file;serializer:storable", undef, {Directory=>'t'});
++ok($session, "new() with file+storable");
++
++$session->param('a', 1 );
++
++$sid = $session->id;
++ok(!tainted $sid, "sid not tainted after new");
++
++$session->flush;
++$session = CGI::Session->load( "driver:file;serializer:storable", $sid, {Directory=>'t'});
++
++ok($session, "load() with file+storable");
++$sid = $session->id;
++ok(!tainted $sid, "sid not tainted after load");
++
++is($session->param('a'), 1, "parameter stored");
++
++$session->flush;
++
++ok(1, "survived flush");
++
++$session->delete;
+-- 
+2.6.4
+
